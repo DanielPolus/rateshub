@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>RatesHub — Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="/static/styles.css">
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <header class="container">
+    <h1>RatesHub — {{ base }}/{{ quote }} (last {{ last }})</h1>
+    <div class="etl-status">
+      {% if scheduler.status == 'healthy' %}
+        🟢 <b>ETL Healthy</b> — last run {{ scheduler.finished_at.strftime('%H:%M UTC') if scheduler.finished_at else '' }},
+        inserted {{ scheduler.rows_ingested }} rows
+      {% elif scheduler.status == 'running' %}
+        🟡 <b>ETL Running...</b>
+      {% elif scheduler.status == 'stale' %}
+        🔴 <b>ETL Stale</b> — last {{ scheduler.age_min }} min ago
+      {% else %}
+        ⚪ <b>ETL status unknown</b>
+      {% endif %}
+    </div>
+
+    <form method="get" action="/dashboard" class="controls">
+      <label>Base:
+        <input type="text" name="base" value="{{ base }}" />
+      </label>
+      <label>Quote:
+        <input type="text" name="quote" value="{{ quote }}" />
+      </label>
+      <label>Window:
+        <select name="last">
+          {% for w in ["7d","30d","90d","180d","1y"] %}
+            <option value="{{ w }}" {% if w == last %}selected{% endif %}>{{ w }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">Update</button>
+      <!-- Экспорт -->
+      <a class="btn" href="/export/csv?base={{ base }}&quote={{ quote }}&last={{ last }}">Export CSV</a>
+      <a class="btn" href="/export/parquet?base={{ base }}&quote={{ quote }}&last={{ last }}">Export Parquet</a>
+    </form>
+  </header>
+
+  {% macro fmt6(x) -%}
+  {% if x is defined and x is not none -%}
+    {{ '%.6f'|format(x) }}
+  {%- else -%}
+    —
+  {%- endif %}
+{%- endmacro %}
+
+{% macro fmtpct(x) -%}
+  {% if x is defined and x is not none -%}
+    {{ '%.2f'|format(x * 100) }}%
+  {%- else -%}
+    —
+  {%- endif %}
+{%- endmacro %}
+
+
+  <main class="container grid">
+    <section class="card">
+      <h2>Time Series</h2>
+      <canvas id="chart"></canvas>
+    </section>
+
+    <section class="card">
+      <h2>Summary</h2>
+      <ul class="stats">
+        <li><b>Count</b> {{ summary.count }}</li>
+        <li><b>Min</b> {{ '%.6f'|format(summary.min) if summary.min is not none else '—' }}</li>
+        <li><b>Max</b> {{ '%.6f'|format(summary.max) if summary.max is not none else '—' }}</li>
+        <li><b>Avg</b> {{ '%.6f'|format(summary.avg) if summary.avg is not none else '—' }}</li>
+        <li><b>StdDev</b> {{ '%.6f'|format(summary.stddev) if summary.stddev is not none else '—' }}</li>
+        <li><b>First</b> {{ '%.6f'|format(summary.first_rate) if summary.first_rate is not none else '—' }}</li>
+        <li><b>Last</b> {{ '%.6f'|format(summary.last_rate) if summary.last_rate is not none else '—' }}</li>
+        <li><b>Δ Abs</b> {{ '%.6f'|format(summary.change_abs) if summary.change_abs is not none else '—' }}</li>
+        <li><b>Δ %</b> {{ '%.2f'|format(summary.change_pct*100) if summary.change_pct is not none else '—' }}%</li>
+        <li><b>Range</b> {{ summary.start }} → {{ summary.end }}</li>
+      </ul>
+    </section>
+  </main>
+
+  <script>
+    const series = {{ series|tojson }};
+    const labels = series.map(p => p.date);
+    const values = series.map(p => p.rate);
+
+    const ctx = document.getElementById('chart');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: '{{ base }}/{{ quote }}',
+          data: values,
+          pointRadius: 0,
+          borderWidth: 2,
+          tension: 0.25,
+        }]
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: { display: true, title: { display: true, text: 'Date' } },
+          y: { display: true, title: { display: true, text: 'Rate' }, ticks: { precision: 6 } }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y}` } }
+        }
+      }
+    });
+  </script>
+</body>
+</html>
